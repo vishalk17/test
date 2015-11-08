@@ -8,8 +8,6 @@
  *
  */
 
-#define DEBUG 1
-
 #include <linux/workqueue.h>
 #include <linux/spinlock.h>
 #include <linux/kthread.h>

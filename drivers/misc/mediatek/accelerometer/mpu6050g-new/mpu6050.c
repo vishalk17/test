@@ -43,7 +43,6 @@
 static DEFINE_MUTEX(mpu6050_i2c_mutex);
 
 /*----------------------------------------------------------------------------*/
-#define DEBUG 1
 /*----------------------------------------------------------------------------*/
 #define CONFIG_MPU6050_LOWPASS   /*apply low pass filter on output*/       
 #define SW_CALIBRATION
