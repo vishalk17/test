@@ -3264,7 +3264,6 @@ static void addrconf_rs_timer(unsigned long data)
 		ndisc_send_rs(idev->dev, &ifp->addr, &in6addr_linklocal_allrouters);
 	} else {
 		inet6_no_ra_notify(RTM_NORA,idev);
-		spin_unlock(&ifp->lock);
 		/*
 		 * Note: we do not support deprecated "all on-link"
 		 * assumption any longer.
