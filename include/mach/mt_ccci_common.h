@@ -59,13 +59,13 @@ typedef enum {
 #define MD1_LOGGER_FILE_PATH "/data/mdlog/mdlog1_config"
 #define MD2_LOGGER_FILE_PATH "/data/mdlog/mdlog2_config"
 
-/* Image string and header */
-/* image name/path */
-#define MOEDM_IMAGE_NAME			"modem.img"
-#define DSP_IMAGE_NAME					"DSP_ROM"
-#define CONFIG_MODEM_FIRMWARE_PATH		"/etc/firmware/"
-#define CONFIG_MODEM_FIRMWARE_CIP_PATH	"/custom/etc/firmware/"
-#define IMG_ERR_STR_LEN				 64
+// Image string and header
+// image name/path
+#define MOEDM_IMAGE_NAME                "modem.img"
+#define DSP_IMAGE_NAME                  "DSP_ROM"
+#define CONFIG_MODEM_FIRMWARE_PATH      "/vendor/etc/firmware/"
+#define CONFIG_MODEM_FIRMWARE_CIP_PATH  "/custom/etc/firmware/"
+#define IMG_ERR_STR_LEN                 64
 
 /* image header constants */
 #define MD_HEADER_MAGIC_NO "CHECK_HEADER"
