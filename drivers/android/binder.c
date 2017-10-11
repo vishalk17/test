@@ -68,11 +68,6 @@ static int binder_last_id;
 static struct workqueue_struct *binder_deferred_workqueue;
 static pid_t system_server_pid;
 
-#define RT_PRIO_INHERIT			"v1.7"
-#ifdef RT_PRIO_INHERIT
-#include <linux/sched/rt.h>
-#endif
-
 #define MTK_BINDER_DEBUG 		"v0.1" /* defined for mtk internal added debug code */
 
 /************************************************************************************************************************/
@@ -361,9 +356,6 @@ static struct binder_transaction_log_entry entry_failed[32];
 static int log_disable;
 #define BINDER_LOG_RESUME	0x2
 #define BINDER_BUF_WARN		0x4
-#ifdef RT_PRIO_INHERIT
-#define BINDER_RT_LOG_ENABLE	0x8
-#endif
 #ifdef CONFIG_MTK_EXTMEM
 extern void* extmem_malloc_page_align(size_t bytes);
 #else
@@ -518,10 +510,6 @@ struct binder_proc {
 	int ready_threads;
 	long default_priority;
 	struct dentry *debugfs_entry;
-#ifdef RT_PRIO_INHERIT
-	unsigned long default_rt_prio:16;
-	unsigned long default_policy:16;
-#endif
 #ifdef BINDER_MONITOR
 	struct binder_buffer *large_buffer;
 #endif
@@ -581,12 +569,6 @@ struct binder_transaction {
 	long	priority;
 	long	saved_priority;
 	kuid_t	sender_euid;
-#ifdef RT_PRIO_INHERIT
-	unsigned long rt_prio:16;
-	unsigned long policy:16;
-	unsigned long saved_rt_prio:16;
-	unsigned long saved_policy:16;
-#endif
 #ifdef BINDER_MONITOR
 	struct timespec timestamp;
 
@@ -2496,19 +2478,6 @@ static void binder_transaction_buffer_release(struct binder_proc *proc,
 	}
 }
 
-#ifdef RT_PRIO_INHERIT
-static void mt_sched_setscheduler_nocheck(struct task_struct *p, int policy, struct sched_param *param)
-{
-	int ret;
-	if (policy == SCHED_FIFO || policy == SCHED_RR)
-		param->sched_priority |= MT_ALLOW_RT_PRIO_BIT;
-
-	ret = sched_setscheduler_nocheck(p, policy, param);
-	if (ret)
-		pr_err("set scheduler fail, error code: %d\n", ret);
-}
-#endif
-
 #ifdef BINDER_MONITOR
 /* binder_update_transaction_time - update read/exec done time for transaction
 ** step:
@@ -2617,25 +2586,6 @@ static void binder_transaction(struct binder_proc *proc,
 		binder_cancel_bwdog(in_reply_to);
 #endif
 		binder_set_nice(in_reply_to->saved_priority);
-#ifdef RT_PRIO_INHERIT
-		if (rt_task(current) && (MAX_RT_PRIO != in_reply_to->saved_rt_prio) &&
-		    !(thread->looper & (BINDER_LOOPER_STATE_REGISTERED |
-					BINDER_LOOPER_STATE_ENTERED))) {
-			struct sched_param param = {
-				.sched_priority = in_reply_to->saved_rt_prio,
-			};
-			mt_sched_setscheduler_nocheck(current,
-				    in_reply_to->saved_policy, &param);
-#ifdef BINDER_MONITOR
-			if (log_disable & BINDER_RT_LOG_ENABLE)
-			{
-				pr_debug("reply reset %d sched_policy from %d to %d rt_prio from %d to %d\n",
-						proc->pid, in_reply_to->policy, in_reply_to->saved_policy,
-						in_reply_to->rt_prio, in_reply_to->saved_rt_prio);
-			}
-#endif
-		}
-#endif
 		if (in_reply_to->to_thread != thread) {
 			binder_user_error("%d:%d got reply transaction with bad transaction stack, transaction %d has target %d:%d\n",
 				proc->pid, thread->pid, in_reply_to->debug_id,
@@ -2880,11 +2830,6 @@ out_err:
 	t->code = tr->code;
 	t->flags = tr->flags;
 	t->priority = task_nice(current);
-#ifdef RT_PRIO_INHERIT
-	t->rt_prio = current->rt_priority;
-	t->policy = current->policy;
-	t->saved_rt_prio = MAX_RT_PRIO;
-#endif
 
 	trace_binder_transaction(reply, t, target_node);
 
@@ -3725,30 +3670,7 @@ retry:
 			wait_event_interruptible(binder_user_error_wait,
 						 binder_stop_on_user_error < 2);
 		}
-#ifdef RT_PRIO_INHERIT
-		/* disable preemption to prevent from schedule-out immediately */
-		preempt_disable();
-#endif
 		binder_set_nice(proc->default_priority);
-#ifdef RT_PRIO_INHERIT
-		if (rt_task(current) && !binder_has_proc_work(proc, thread)) {
-			/* make sure binder has no work before setting priority back*/
-			struct sched_param param = {
-				.sched_priority = proc->default_rt_prio,
-			};
-#ifdef BINDER_MONITOR
-			if (log_disable & BINDER_RT_LOG_ENABLE)
-			{
-				pr_debug("enter threadpool reset %d sched_policy from %u to %d rt_prio from %u to %d\n",
-						current->pid, current->policy, proc->default_policy,
-						current->rt_priority, proc->default_rt_prio);
-			}
-#endif
-			mt_sched_setscheduler_nocheck(current,
-				    proc->default_policy, &param);
-		}
-		preempt_enable_no_resched();
-#endif
 		if (non_block) {
 			if (!binder_has_proc_work(proc, thread))
 				ret = -EAGAIN;
@@ -3952,29 +3874,6 @@ retry:
 			tr.target.ptr = target_node->ptr;
 			tr.cookie =  target_node->cookie;
 			t->saved_priority = task_nice(current);
-#ifdef RT_PRIO_INHERIT
-			/* since we may fail the rt inherit due to target
-			 * wait queue task_list is empty, check again here.
-			 */
-			if ((SCHED_RR == t->policy || SCHED_FIFO == t->policy) && t->rt_prio > current->rt_priority &&
-			    !(t->flags & TF_ONE_WAY)) {
-				struct sched_param param = {
-					.sched_priority = t->rt_prio,
-				};
-
-				t->saved_rt_prio = current->rt_priority;
-				t->saved_policy = current->policy;
-				mt_sched_setscheduler_nocheck(current, t->policy, &param);
-#ifdef BINDER_MONITOR
-				if (log_disable & BINDER_RT_LOG_ENABLE)
-				{
-					pr_debug("read set %d sched_policy from %d to %d rt_prio from %d to %d\n",
-						proc->pid, t->saved_policy, t->policy,
-						t->saved_rt_prio, t->rt_prio);
-				}
-#endif
-			}
-#endif
 			if (t->priority < target_node->min_priority &&
 			    !(t->flags & TF_ONE_WAY))
 				binder_set_nice(t->priority);
@@ -4598,10 +4497,6 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	INIT_LIST_HEAD(&proc->todo);
 	init_waitqueue_head(&proc->wait);
 	proc->default_priority = task_nice(current);
-#ifdef RT_PRIO_INHERIT
-	proc->default_rt_prio = current->rt_priority;
-	proc->default_policy = current->policy;
-#endif
 
 	binder_lock(__func__);
 
@@ -5931,17 +5826,10 @@ static int binder_transaction_log_enable_show(struct seq_file *m, void *unused)
 {
 #ifdef BINDER_MONITOR
 	seq_printf(m, " Current transaciton log is %s %s %s"
-#ifdef RT_PRIO_INHERIT
-		       " %s"
-#endif
 		       "\n",
 			(log_disable & 0x1) ? "disabled" : "enabled",
 			(log_disable & BINDER_LOG_RESUME) ? "(self resume)" : "",
 			(log_disable & BINDER_BUF_WARN) ? "(buf warning enabled)" : ""
-#ifdef RT_PRIO_INHERIT
-
-			,(log_disable & BINDER_RT_LOG_ENABLE) ? "(rt inherit log enabled)" : ""
-#endif
 			);
 #else
 	seq_printf(m, " Current transaciton log is %s %s\n",
@@ -5985,24 +5873,13 @@ static ssize_t binder_transaction_log_enable_write(struct file *filp,
 	if (val & BINDER_BUF_WARN) {
 		log_disable |= BINDER_BUF_WARN;
 	}
-#ifdef RT_PRIO_INHERIT
-	if (val & BINDER_RT_LOG_ENABLE) {
-		log_disable |= BINDER_RT_LOG_ENABLE;
-	}
-#endif
 	pr_info("%d (%s) set transaction log %s %s %s"
-#ifdef RT_PRIO_INHERIT
-			" %s"
-#endif
 			"\n",
 			task_pid_nr(current), current->comm,
 			(log_disable & 0x1) ? "disabled" : "enabled",
 			(log_disable & BINDER_LOG_RESUME) ?
 			"(self resume)" : "",
 			(log_disable & BINDER_BUF_WARN) ? "(buf warning)" : ""
-#ifdef RT_PRIO_INHERIT
-			,(log_disable & BINDER_RT_LOG_ENABLE) ? "(rt inherit log enabled)" : ""
-#endif
 	      );
 #else
 	pr_info("%d (%s) set transaction log %s %s\n",
