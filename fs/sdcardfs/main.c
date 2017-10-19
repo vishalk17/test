@@ -45,8 +45,6 @@ static const match_table_t sdcardfs_tokens = {
 	{Opt_mask, "mask=%u"},
 	{Opt_userid, "userid=%d"},
 	{Opt_multiuser, "multiuser"},
-	{Opt_gid_derivation, "derive_gid"},
-	{Opt_default_normal, "default_normal"},
 	{Opt_reserved_mb, "reserved_mb=%u"},
 	{Opt_err, NULL}
 };
@@ -68,9 +66,6 @@ static int parse_options(struct super_block *sb, char *options, int silent,
 	vfsopts->gid = 0;
 	/* by default, 0MB is reserved */
 	opts->reserved_mb = 0;
-	/* by default, gid derivation is off */
-	opts->gid_derivation = false;
-	vfsopts->default_normal = false;
 
 	*debug = 0;
 
@@ -180,7 +175,6 @@ int parse_options_remount(struct super_block *sb, char *options, int silent,
 				return 0;
 			vfsopts->mask = option;
 			break;
-		case Opt_default_normal:
 		case Opt_multiuser:
 		case Opt_userid:
 		case Opt_fsuid:
@@ -307,7 +301,7 @@ static int sdcardfs_read_super(struct vfsmount *mnt, struct super_block *sb,
 	sb->s_op = &sdcardfs_sops;
 
 	/* get a new inode and allocate our root dentry */
-	inode = sdcardfs_iget(sb, lower_path.dentry->d_inode, 0);
+	inode = sdcardfs_iget(sb, d_inode(lower_path.dentry), 0);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto out_sput;
@@ -339,17 +333,17 @@ static int sdcardfs_read_super(struct vfsmount *mnt, struct super_block *sb,
 	sb_info->obbpath_s = kzalloc(PATH_MAX, GFP_KERNEL);
 	mutex_lock(&sdcardfs_super_list_lock);
 	if (sb_info->options.multiuser) {
-		setup_derived_state(sb->s_root->d_inode, PERM_PRE_ROOT,
+		setup_derived_state(d_inode(sb->s_root), PERM_PRE_ROOT,
 				sb_info->options.fs_user_id, AID_ROOT,
-				false, SDCARDFS_I(sb->s_root->d_inode)->data);
+				false, SDCARDFS_I(d_inode(sb->s_root))->data);
 		snprintf(sb_info->obbpath_s, PATH_MAX, "%s/obb", dev_name);
 	} else {
-		setup_derived_state(sb->s_root->d_inode, PERM_ROOT,
+		setup_derived_state(d_inode(sb->s_root), PERM_ROOT,
 				sb_info->options.fs_user_id, AID_ROOT,
-				false, SDCARDFS_I(sb->s_root->d_inode)->data);
+				false, SDCARDFS_I(d_inode(sb->s_root))->data);
 		snprintf(sb_info->obbpath_s, PATH_MAX, "%s/Android/obb", dev_name);
 	}
-	fixup_tmp_permissions(sb->s_root->d_inode);
+	fixup_tmp_permissions(d_inode(sb->s_root));
 	sb_info->sb = sb;
 	list_add(&sb_info->list, &sdcardfs_super_list);
 	mutex_unlock(&sdcardfs_super_list_lock);

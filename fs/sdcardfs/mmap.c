@@ -66,9 +66,8 @@ out:
 	return err;
 }
 
-static ssize_t sdcardfs_direct_IO(int rw, struct kiocb *iocb,
-			      const struct iovec *iov, loff_t offset,
-			      unsigned long nr_segs)
+static ssize_t sdcardfs_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
+				  loff_t offset, unsigned long nr_segs)
 {
 	/*
 	 * This function should never be called directly.  We need it

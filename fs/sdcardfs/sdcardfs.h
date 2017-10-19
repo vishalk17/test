@@ -73,7 +73,7 @@
 
 #define AID_PACKAGE_INFO  1027
 
-
+#define d_inode(x)	x->d_inode
 /*
  * Permissions are handled by our permission function.
  * We don't want anyone who happens to look at our inode value to prematurely
@@ -82,8 +82,9 @@
  */
 #define fixup_tmp_permissions(x)	\
 	do {						\
-		(x)->i_uid = SDCARDFS_I(x)->data->d_uid;	\
-		(x)->i_gid = AID_SDCARD_RW;	\
+		(x)->i_uid = make_kuid(&init_user_ns,	\
+				SDCARDFS_I(x)->data->d_uid);	\
+		(x)->i_gid = make_kgid(&init_user_ns, AID_SDCARD_RW);	\
 		(x)->i_mode = ((x)->i_mode & S_IFMT) | 0775;\
 	} while (0)
 
@@ -218,14 +219,12 @@ struct sdcardfs_mount_options {
 	gid_t fs_low_gid;
 	userid_t fs_user_id;
 	bool multiuser;
-	bool gid_derivation;
 	unsigned int reserved_mb;
 };
 
 struct sdcardfs_vfsmount_options {
 	gid_t gid;
 	mode_t mask;
-	bool default_normal;
 };
 
 extern int parse_options_remount(struct super_block *sb, char *options, int silent,
@@ -417,7 +416,7 @@ static inline int get_gid(struct vfsmount *mnt,
 {
 	struct sdcardfs_vfsmount_options *opts = mnt->data;
 
-	if (opts->gid == AID_SDCARD_RW && !opts->default_normal)
+	if (opts->gid == AID_SDCARD_RW)
 		/* As an optimization, certain trusted system components only run
 		 * as owner but operate across all users. Since we're now handing
 		 * out the sdcard_rw GID only to trusted apps, we're okay relaxing
@@ -530,14 +529,13 @@ extern int setup_obb_dentry(struct dentry *dentry, struct path *lower_path);
 static inline struct dentry *lock_parent(struct dentry *dentry)
 {
 	struct dentry *dir = dget_parent(dentry);
-
-	mutex_lock_nested(&dir->d_inode->i_mutex, I_MUTEX_PARENT);
+	mutex_lock_nested(&d_inode(dir)->i_mutex, I_MUTEX_PARENT);
 	return dir;
 }
 
 static inline void unlock_dir(struct dentry *dir)
 {
-	mutex_unlock(&dir->d_inode->i_mutex);
+	mutex_unlock(&d_inode(dir)->i_mutex);
 	dput(dir);
 }
 
@@ -556,26 +554,26 @@ static inline int prepare_dir(const char *path_s, uid_t uid, gid_t gid, mode_t m
 		goto out_unlock;
 	}
 
-	err = vfs_mkdir2(parent.mnt, parent.dentry->d_inode, dent, mode);
+	err = vfs_mkdir2(parent.mnt, d_inode(parent.dentry), dent, mode);
 	if (err) {
 		if (err == -EEXIST)
 			err = 0;
 		goto out_dput;
 	}
 
-	attrs.ia_uid = uid;
-	attrs.ia_gid = gid;
+	attrs.ia_uid = make_kuid(&init_user_ns, uid);
+	attrs.ia_gid = make_kgid(&init_user_ns, gid);
 	attrs.ia_valid = ATTR_UID | ATTR_GID;
-	mutex_lock(&dent->d_inode->i_mutex);
+	mutex_lock(&d_inode(dent)->i_mutex);
 	notify_change2(parent.mnt, dent, &attrs);
-	mutex_unlock(&dent->d_inode->i_mutex);
+	mutex_unlock(&d_inode(dent)->i_mutex);
 
 out_dput:
 	dput(dent);
 
 out_unlock:
 	/* parent dentry locked by lookup_create */
-	mutex_unlock(&parent.dentry->d_inode->i_mutex);
+	mutex_unlock(&d_inode(parent.dentry)->i_mutex);
 	path_put(&parent);
 	return err;
 }
@@ -631,11 +629,10 @@ static inline int check_min_free_space(struct dentry *dentry, size_t size, int d
  */
 static inline void sdcardfs_copy_and_fix_attrs(struct inode *dest, const struct inode *src)
 {
-
 	dest->i_mode = (src->i_mode  & S_IFMT) | S_IRWXU | S_IRWXG |
 			S_IROTH | S_IXOTH; /* 0775 */
-	dest->i_uid = SDCARDFS_I(dest)->data->d_uid;
-	dest->i_gid = AID_SDCARD_RW;
+	dest->i_uid = make_kuid(&init_user_ns, SDCARDFS_I(dest)->data->d_uid);
+	dest->i_gid = make_kgid(&init_user_ns, AID_SDCARD_RW);
 	dest->i_rdev = src->i_rdev;
 	dest->i_atime = src->i_atime;
 	dest->i_mtime = src->i_mtime;
