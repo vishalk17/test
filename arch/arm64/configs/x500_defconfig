@@ -2685,7 +2685,6 @@ CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"
 #
 # File systems
 #
-CONFIG_SDCARD_FS=y
 # CONFIG_EXT2_FS is not set
 CONFIG_EXT3_FS=y
 # CONFIG_EXT3_DEFAULTS_TO_ORDERED is not set
