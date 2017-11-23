@@ -414,8 +414,6 @@ struct binder_transaction {
 
 static void
 binder_defer_work(struct binder_proc *proc, enum binder_deferred_state defer);
-static inline void binder_lock(const char *tag);
-static inline void binder_unlock(const char *tag);
 
 static size_t binder_buffer_size(struct binder_proc *proc,
 		struct binder_buffer *buffer);
@@ -3354,7 +3352,7 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 		break;
 	case BINDER_SET_CONTEXT_MGR:
-        ret = binder_ioctl_set_ctx_mgr(filp, thread);
+        ret = binder_ioctl_set_ctx_mgr(filp);
         if (ret)
             goto err;
 		break;
