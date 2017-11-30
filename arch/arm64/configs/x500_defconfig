@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/arm64 3.10.107 Kernel Configuration
+# Linux/arm64 3.10.108 Kernel Configuration
 #
 CONFIG_ARM64=y
 CONFIG_ARM_HAS_SG_CHAIN=y
@@ -39,7 +39,7 @@ CONFIG_IRQ_WORK=y
 #
 CONFIG_INIT_ENV_ARG_LIMIT=32
 CONFIG_CROSS_COMPILE="aarch64-linux-android-"
-CONFIG_LOCALVERSION="-SscSPs"
+CONFIG_LOCALVERSION="-SscSPs-vishalk17-v01"
 # CONFIG_LOCALVERSION_AUTO is not set
 CONFIG_DEFAULT_HOSTNAME="(none)"
 CONFIG_SWAP=y
@@ -2675,6 +2675,7 @@ CONFIG_MTK_EIC=y
 # Android
 #
 CONFIG_ANDROID_BINDER_IPC=y
+CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"
 
 #
 # File systems
