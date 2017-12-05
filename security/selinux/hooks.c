@@ -701,7 +701,9 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 	if (strcmp(sb->s_type->name, "proc") == 0)
 		sbsec->flags |= SE_SBPROC | SE_SBGENFS;
 
-	if (strcmp(sb->s_type->name, "debugfs") == 0)
+	if (!strcmp(sb->s_type->name, "debugfs") ||
+	    !strcmp(sb->s_type->name, "sysfs") ||
+	    !strcmp(sb->s_type->name, "pstore"))
 		sbsec->flags |= SE_SBGENFS;
 
 	/* Determine the labeling behavior to use for this filesystem type. */
@@ -1907,12 +1909,10 @@ static int selinux_binder_transfer_file(struct task_struct *from, struct task_st
 	struct inode *inode = file->f_path.dentry->d_inode;
 	struct inode_security_struct *isec = inode->i_security;
 	struct common_audit_data ad;
-	struct selinux_audit_data sad = {0,};
 	int rc;
 
 	ad.type = LSM_AUDIT_DATA_PATH;
 	ad.u.path = file->f_path;
-	ad.selinux_audit_data = &sad;
 
 	if (sid != fsec->sid) {
 		rc = avc_has_perm(sid, fsec->sid,
