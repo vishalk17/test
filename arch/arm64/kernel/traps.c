@@ -277,7 +277,7 @@ void register_undef_hook(struct undef_hook *hook)
 static int call_undef_hook(struct pt_regs *regs, unsigned int instr)
 {
 	struct undef_hook *hook;
-	int (*fn)(struct pt_regs *regs, unsigned int instr) = arm_undefinstr_retry;
+	int (*fn)(struct pt_regs *regs, unsigned int instr) = NULL;
 
 	list_for_each_entry(hook, &undef_hook, node)
 		if ((instr & hook->instr_mask) == hook->instr_val &&

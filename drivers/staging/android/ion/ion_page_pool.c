@@ -164,7 +164,7 @@ struct ion_page_pool *ion_page_pool_create(gfp_t gfp_mask, unsigned int order)
 	if (!pool) {
                 IONMSG("%s kmalloc failed pool is null.\n", __func__);
 		return NULL;
-        }
+  }
 	pool->high_count = 0;
 	pool->low_count = 0;
 	INIT_LIST_HEAD(&pool->low_items);

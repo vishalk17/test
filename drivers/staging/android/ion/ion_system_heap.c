@@ -95,7 +95,7 @@ static void free_buffer_page(struct ion_system_heap *heap,
 
 		ion_page_pool_free(pool, page);
 	} else {
-		__free_pages(page, order);
+		      __free_pages(page, order);
 	}
 }
 

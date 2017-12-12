@@ -64,8 +64,8 @@ static int uid_stat_read_atomic_int_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations uid_stat_read_atomic_int_fops = {
-	.open		= uid_stat_read_atomic_int_open,
-	.read		= seq_read,
+	.open		  = uid_stat_read_atomic_int_open,
+	.read		  = seq_read,
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };

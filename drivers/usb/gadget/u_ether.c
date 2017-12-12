@@ -272,6 +272,9 @@ rx_submit(struct eth_dev *dev, struct usb_request *req, gfp_t gfp_flags)
 	if (dev->ul_max_pkts_per_xfer)
 		size *= dev->ul_max_pkts_per_xfer;
 
+	if (dev->ul_max_pkts_per_xfer)
+		size *= dev->ul_max_pkts_per_xfer;
+
 	if (dev->port_usb->is_fixed)
 		size = max_t(size_t, size, dev->port_usb->fixed_out_len);
 
@@ -477,7 +480,7 @@ done:
 static void rx_fill(struct eth_dev *dev, gfp_t gfp_flags)
 {
 	struct usb_request	*req;
-	unsigned long		flags;
+	unsigned long		    flags;
 	int                 req_cnt = 0;
 
 	/* fill unused rxq slots with some skb */
@@ -546,6 +549,36 @@ static void process_rx_w1(struct work_struct *work)
 	
 	if (!dev->port_usb)
 		return;
+
+	if (netif_running(dev->net))
+		rx_fill(dev, GFP_KERNEL);
+}
+
+static void process_rx_w(struct work_struct *work)
+{
+	struct eth_dev	*dev = container_of(work, struct eth_dev, rx_work);
+	struct sk_buff	*skb;
+	int		status = 0;
+
+	if (!dev->port_usb)
+		return;
+
+	while ((skb = skb_dequeue(&dev->rx_frames))) {
+		if (status < 0
+				|| ETH_HLEN > skb->len
+				|| skb->len > ETH_FRAME_LEN) {
+			dev->net->stats.rx_errors++;
+			dev->net->stats.rx_length_errors++;
+			DBG(dev, "rx length %d\n", skb->len);
+			dev_kfree_skb_any(skb);
+			continue;
+		}
+		skb->protocol = eth_type_trans(skb, dev->net);
+		dev->net->stats.rx_packets++;
+		dev->net->stats.rx_bytes += skb->len;
+
+		status = netif_rx_ni(skb);
+	}
 
 	if (netif_running(dev->net))
 		rx_fill(dev, GFP_KERNEL);
@@ -1065,6 +1098,8 @@ static int eth_stop(struct net_device *net)
 
 /*-------------------------------------------------------------------------*/
 
+static u8 host_ethaddr[ETH_ALEN];
+
 /* initial value, changed by "ifconfig usb0 hw ether xx:xx:xx:xx:xx:xx" */
 static char *dev_addr;
 module_param(dev_addr, charp, S_IRUGO);
@@ -1093,6 +1128,17 @@ static int get_ether_addr(const char *str, u8 *dev_addr)
 			return 0;
 	}
 	eth_random_addr(dev_addr);
+	return 1;
+}
+
+static int get_host_ether_addr(u8 *str, u8 *dev_addr)
+{
+	memcpy(dev_addr, str, ETH_ALEN);
+	if (is_valid_ether_addr(dev_addr))
+		return 0;
+
+	random_ether_addr(dev_addr);
+	memcpy(str, dev_addr, ETH_ALEN);
 	return 1;
 }
 
@@ -1140,7 +1186,7 @@ struct eth_dev *gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
 	spin_lock_init(&dev->reqrx_lock);	
 	INIT_WORK(&dev->work, eth_work);
 	INIT_WORK(&dev->rx_work, process_rx_w);
-        INIT_WORK(&dev->rx_work1, process_rx_w1);
+  INIT_WORK(&dev->rx_work1, process_rx_w1);
 	INIT_LIST_HEAD(&dev->tx_reqs);
 	INIT_LIST_HEAD(&dev->rx_reqs);
 
@@ -1153,9 +1199,11 @@ struct eth_dev *gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
 	if (get_ether_addr(dev_addr, net->dev_addr))
 		dev_warn(&g->dev,
 			"using random %s ethernet address\n", "self");
-	if (get_ether_addr(host_addr, dev->host_mac))
-		dev_warn(&g->dev,
-			"using random %s ethernet address\n", "host");
+
+	if (get_host_ether_addr(host_ethaddr, dev->host_mac))
+		dev_warn(&g->dev, "using random %s ethernet address\n", "host");
+	else
+		dev_warn(&g->dev, "using previous %s ethernet address\n", "host");
 
 	if (ethaddr)
 		memcpy(ethaddr, dev->host_mac, ETH_ALEN);

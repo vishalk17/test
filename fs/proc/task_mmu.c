@@ -524,35 +524,18 @@ static void smaps_pte_entry(pte_t ptent, unsigned long addr,
 		swp_entry_t swpent = pte_to_swp_entry(ptent);
 
 		if (!non_swap_entry(swpent)) {
-#ifdef CONFIG_SWAP
-	                swp_entry_t entry;
-		        struct swap_info_struct *p;
-#endif // CONFIG_SWAP
+			int mapcount;
 
-			mss->swap += ptent_size;
+			mss->swap += PAGE_SIZE;
+			mapcount = swp_swapcount(swpent);
+			if (mapcount >= 2) {
+				u64 pss_delta = (u64)PAGE_SIZE << PSS_SHIFT;
 
-#ifdef CONFIG_SWAP
-			entry = pte_to_swp_entry(ptent);
-			if (non_swap_entry(entry))
-				return;
-			p = swap_info_get(entry);
-			if (p) {
-				int swapcount = swap_count(p->swap_map[swp_offset(entry)]);
-				if (swapcount == 0) {
-					swapcount = 1;
-				}
-#ifdef CONFIG_MEMCG_ZNDSWAP
-				/* It indicates 2ndswap ONLY */
-				if (swp_type(entry) == 1UL)
-					mss->pswap_zndswap += (ptent_size << PSS_SHIFT) / swapcount;
-				else
-					mss->pswap += (ptent_size << PSS_SHIFT) / swapcount;
-#else
-				mss->pswap += (ptent_size << PSS_SHIFT) / swapcount;
-#endif
-				swap_info_unlock(p);
+				do_div(pss_delta, mapcount);
+				mss->swap_pss += pss_delta;
+			} else {
+				mss->swap_pss += (u64)PAGE_SIZE << PSS_SHIFT;
 			}
-#endif // CONFIG_SWAP
 		} else if (is_migration_entry(swpent))
 			page = migration_entry_to_page(swpent);
 	} else if (pte_file(ptent)) {
@@ -706,6 +689,7 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 #ifdef CONFIG_MEMCG_ZNDSWAP
 		   "PSwap_zndswap:  %8lu kB\n"
 #endif
+		   "SwapPss:        %8lu kB\n"
 		   "KernelPageSize: %8lu kB\n"
 		   "MMUPageSize:    %8lu kB\n"
 		   "Locked:         %8lu kB\n",

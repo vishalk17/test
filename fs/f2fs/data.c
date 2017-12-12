@@ -1248,6 +1248,15 @@ next_page:
 	return 0;
 }
 
+static int get_data_block_bmap(struct inode *inode, sector_t iblock,
+			struct buffer_head *bh_result, int create)
+{
+	/* Block number less than F2FS MAX BLOCKS */
+	if (unlikely(iblock >= max_file_size(0)))
+		return -EFBIG;
+	return get_data_block_ro(inode, iblock, bh_result, create);
+}
+
 static int f2fs_read_data_page(struct file *file, struct page *page)
 {
 	struct inode *inode = page->mapping->host;
@@ -1948,7 +1957,8 @@ static ssize_t f2fs_direct_IO(int rw, struct kiocb *iocb,
 	return err;
 }
 
-void f2fs_invalidate_page(struct page *page, unsigned long offset)
+static void f2fs_invalidate_data_page(struct page *page, unsigned int offset,
+				      unsigned int length)
 {
 	struct inode *inode = page->mapping->host;
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);

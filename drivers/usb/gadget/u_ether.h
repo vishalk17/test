@@ -52,8 +52,8 @@ struct gether {
 	u32				header_len;
 	/* NCM requires fixed size bundles */
 	bool				is_fixed;
-	u32				fixed_out_len;
-	u32				fixed_in_len;
+	u32			  	fixed_out_len;
+	u32			  	fixed_in_len;
 
 	unsigned			ul_max_pkts_per_xfer;
 	unsigned			dl_max_pkts_per_xfer;
