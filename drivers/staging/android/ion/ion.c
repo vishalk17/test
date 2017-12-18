@@ -814,22 +814,35 @@ void ion_unmap_kernel(struct ion_client *client, struct ion_handle *handle)
 }
 EXPORT_SYMBOL(ion_unmap_kernel);
 
-static int ion_client_validate(struct ion_device *dev,
-				struct ion_client *client)
+static struct mutex debugfs_mutex;
+static struct rb_root *ion_root_client;
+extern struct ion_device *g_ion_device;
+static int is_client_alive(struct ion_client *client)
 {
-    struct rb_node *n;
+	struct rb_node *node;
+	struct ion_client *tmp;
+	struct ion_device *dev;
 
-    for (n = rb_first(&dev->clients); n; n = rb_next(n)) {
-        struct ion_client * valid_client = rb_entry(n, struct ion_client, node);
-        if (client == valid_client) {
-            return 1;
-        }
-    }
+	node = ion_root_client->rb_node;
+	dev = container_of(ion_root_client, struct ion_device, clients);
 
-    return 0;
+	down_read(&dev->lock);
+	while (node) {
+		tmp = rb_entry(node, struct ion_client, node);
+		if (client < tmp) {
+			node = node->rb_left;
+		} else if (client > tmp) {
+			node = node->rb_right;
+		} else {
+			up_read(&dev->lock);
+			return 1;
+		}
+	}
+
+	up_read(&dev->lock);
+	return 0;
 }
 
-extern struct ion_device *g_ion_device;
 static int ion_debug_client_show(struct seq_file *s, void *unused)
 {
 	struct ion_client *client = s->private;
@@ -839,14 +852,13 @@ static int ion_debug_client_show(struct seq_file *s, void *unused)
 	const char *names[ION_NUM_HEAP_IDS] = {NULL};
 	int i;
 
-	down_read(&dev->lock);
-        if (!ion_client_validate(dev, client)) {
-            pr_err("%s: client is invlaid.\n", __func__);
-            up_read(&dev->lock);
-            return -1;
-        }
-
-        seq_printf(s, "%16.s %8.s %8.s %8.s %8.s %8.s\n", "heap_name","pid", "size", "handle_count","handle","buffer");
+	mutex_lock(&debugfs_mutex);
+	if (!is_client_alive(client)) {
+		seq_printf(s, "ion_client 0x%p dead, can't dump its buffers\n",
+			   client);
+		mutex_unlock(&debugfs_mutex);
+		return 0;
+	}
 
 	mutex_lock(&client->lock);
 	for (n = rb_first(&client->handles); n; n = rb_next(n)) {
@@ -863,6 +875,7 @@ static int ion_debug_client_show(struct seq_file *s, void *unused)
                                client->pid, buffer->size, buffer->handle_count, handle, buffer);
 	}
 	mutex_unlock(&client->lock);
+	mutex_unlock(&debugfs_mutex);
 
         seq_printf(s, "----------------------------------------------------\n");
 
@@ -1019,6 +1032,7 @@ void __ion_client_destroy(struct ion_client *client, int from_kern)
 	struct rb_node *n;
 
 	pr_debug("%s: %d\n", __func__, __LINE__);
+	mutex_lock(&debugfs_mutex);
 	while ((n = rb_first(&client->handles))) {
 		struct ion_handle *handle = rb_entry(n, struct ion_handle,
 						     node);
@@ -1047,6 +1061,7 @@ void __ion_client_destroy(struct ion_client *client, int from_kern)
 #endif
 
 	kfree(client);
+	mutex_unlock(&debugfs_mutex);
 }
 
 void ion_client_destroy(struct ion_client *client)
@@ -1670,7 +1685,7 @@ static int ion_debug_heap_show(struct seq_file *s, void *unused)
 	seq_printf(s, "%16.s(%16.s) %16.s %16.s %s\n", "client", "dbg_name", "pid", "size", "address");
 	seq_printf(s, "----------------------------------------------------\n");
 
-	down_read(&dev->lock);
+	mutex_lock(&debugfs_mutex);
 	for (n = rb_first(&dev->clients); n; n = rb_next(n)) {
 		struct ion_client *client = rb_entry(n, struct ion_client,
 						     node);
@@ -1688,7 +1703,7 @@ static int ion_debug_heap_show(struct seq_file *s, void *unused)
 					"from_kernel", client->pid, size, client);
 		}
 	}
-	up_read(&dev->lock);
+	mutex_unlock(&debugfs_mutex);
 
 	seq_printf(s, "----------------------------------------------------\n");
 	seq_printf(s, "orphaned allocations (info is from last known client):"
@@ -1915,6 +1930,8 @@ debugfs_done:
 	/* Create ION Debug DB Root */
 	ion_debug_create_db(idev->debug_root);
 #endif
+	ion_root_client = &idev->clients;
+	mutex_init(&debugfs_mutex);
 	return idev;
 }
 
@@ -2219,7 +2236,6 @@ static int ion_debugdb_show_backtrace(struct seq_file *s, struct ion_record_basi
  * ION Debug DB file operations
  */
 
-extern struct ion_device *g_ion_device;
 static int ion_debug_dbcl_show(struct seq_file *s, void *unused)
 {
 	unsigned long key =(unsigned long) s->private;
