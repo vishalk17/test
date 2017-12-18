@@ -21,6 +21,7 @@
 #include <linux/list.h>
 #include <linux/proc_fs.h>
 #include <linux/profile.h>
+#include <linux/rtmutex.h>
 #include <linux/sched.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
@@ -29,7 +30,7 @@
 #define UID_HASH_BITS	10
 DECLARE_HASHTABLE(hash_table, UID_HASH_BITS);
 
-static DEFINE_MUTEX(uid_lock);
+static DEFINE_RT_MUTEX(uid_lock);
 static struct proc_dir_entry *cpu_parent;
 static struct proc_dir_entry *io_parent;
 static struct proc_dir_entry *proc_parent;
@@ -39,6 +40,7 @@ struct io_stats {
 	u64 write_bytes;
 	u64 rchar;
 	u64 wchar;
+	u64 fsync;
 };
 
 #define UID_STATE_FOREGROUND	0
@@ -99,7 +101,7 @@ static int uid_cputime_show(struct seq_file *m, void *v)
 	cputime_t stime;
 	unsigned long bkt;
 
-	mutex_lock(&uid_lock);
+	rt_mutex_lock(&uid_lock);
 
 	hash_for_each(hash_table, bkt, uid_entry, hash) {
 		uid_entry->active_stime = 0;
@@ -113,7 +115,7 @@ static int uid_cputime_show(struct seq_file *m, void *v)
 			current_user_ns(), task_uid(task)));
 		if (!uid_entry) {
 			read_unlock(&tasklist_lock);
-			mutex_unlock(&uid_lock);
+			rt_mutex_unlock(&uid_lock);
 			pr_err("%s: failed to find the uid_entry for uid %d\n",
 				__func__, from_kuid_munged(current_user_ns(),
 				task_uid(task)));
@@ -146,7 +148,7 @@ static int uid_cputime_show(struct seq_file *m, void *v)
 			total_power);
 	}
 
-	mutex_unlock(&uid_lock);
+	rt_mutex_unlock(&uid_lock);
 	return 0;
 }
 
@@ -193,7 +195,7 @@ static ssize_t uid_remove_write(struct file *file,
 		kstrtol(end_uid, 10, &uid_end) != 0) {
 		return -EINVAL;
 	}
-	mutex_lock(&uid_lock);
+	rt_mutex_lock(&uid_lock);
 
 	for (; uid_start <= uid_end; uid_start++) {
 		hash_for_each_possible_safe(hash_table, uid_entry, tmp,
@@ -205,7 +207,7 @@ static ssize_t uid_remove_write(struct file *file,
 		}
 	}
 
-	mutex_unlock(&uid_lock);
+	rt_mutex_unlock(&uid_lock);
 	return count;
 }
 
@@ -215,16 +217,24 @@ static const struct file_operations uid_remove_fops = {
 	.write		= uid_remove_write,
 };
 
+static u64 compute_write_bytes(struct task_struct *task)
+{
+	if (task->ioac.write_bytes <= task->ioac.cancelled_write_bytes)
+		return 0;
+
+	return task->ioac.write_bytes - task->ioac.cancelled_write_bytes;
+}
+
 static void add_uid_io_curr_stats(struct uid_entry *uid_entry,
 			struct task_struct *task)
 {
 	struct io_stats *io_curr = &uid_entry->io[UID_STATE_TOTAL_CURR];
 
 	io_curr->read_bytes += task->ioac.read_bytes;
-	io_curr->write_bytes +=
-		task->ioac.write_bytes - task->ioac.cancelled_write_bytes;
+	io_curr->write_bytes += compute_write_bytes(task);
 	io_curr->rchar += task->ioac.rchar;
 	io_curr->wchar += task->ioac.wchar;
+	io_curr->fsync += task->ioac.syscfs;
 }
 
 static void clean_uid_io_last_stats(struct uid_entry *uid_entry,
@@ -233,10 +243,10 @@ static void clean_uid_io_last_stats(struct uid_entry *uid_entry,
 	struct io_stats *io_last = &uid_entry->io[UID_STATE_TOTAL_LAST];
 
 	io_last->read_bytes -= task->ioac.read_bytes;
-	io_last->write_bytes -=
-		task->ioac.write_bytes - task->ioac.cancelled_write_bytes;
+	io_last->write_bytes -= compute_write_bytes(task);
 	io_last->rchar -= task->ioac.rchar;
 	io_last->wchar -= task->ioac.wchar;
+	io_last->fsync -= task->ioac.syscfs;
 }
 
 static void update_io_stats_locked(void)
@@ -246,7 +256,7 @@ static void update_io_stats_locked(void)
 	struct io_stats *io_bucket, *io_curr, *io_last;
 	unsigned long bkt;
 
-	BUG_ON(!mutex_is_locked(&uid_lock));
+	BUG_ON(!rt_mutex_is_locked(&uid_lock));
 
 	hash_for_each(hash_table, bkt, uid_entry, hash)
 		memset(&uid_entry->io[UID_STATE_TOTAL_CURR], 0,
@@ -273,11 +283,13 @@ static void update_io_stats_locked(void)
 			io_curr->write_bytes - io_last->write_bytes;
 		io_bucket->rchar += io_curr->rchar - io_last->rchar;
 		io_bucket->wchar += io_curr->wchar - io_last->wchar;
+		io_bucket->fsync += io_curr->fsync - io_last->fsync;
 
 		io_last->read_bytes = io_curr->read_bytes;
 		io_last->write_bytes = io_curr->write_bytes;
 		io_last->rchar = io_curr->rchar;
 		io_last->wchar = io_curr->wchar;
+		io_last->fsync = io_curr->fsync;
 	}
 }
 
@@ -286,12 +298,12 @@ static int uid_io_show(struct seq_file *m, void *v)
 	struct uid_entry *uid_entry;
 	unsigned long bkt;
 
-	mutex_lock(&uid_lock);
+	rt_mutex_lock(&uid_lock);
 
 	update_io_stats_locked();
 
 	hash_for_each(hash_table, bkt, uid_entry, hash) {
-		seq_printf(m, "%d %llu %llu %llu %llu %llu %llu %llu %llu\n",
+		seq_printf(m, "%d %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
 			uid_entry->uid,
 			uid_entry->io[UID_STATE_FOREGROUND].rchar,
 			uid_entry->io[UID_STATE_FOREGROUND].wchar,
@@ -300,10 +312,12 @@ static int uid_io_show(struct seq_file *m, void *v)
 			uid_entry->io[UID_STATE_BACKGROUND].rchar,
 			uid_entry->io[UID_STATE_BACKGROUND].wchar,
 			uid_entry->io[UID_STATE_BACKGROUND].read_bytes,
-			uid_entry->io[UID_STATE_BACKGROUND].write_bytes);
+			uid_entry->io[UID_STATE_BACKGROUND].write_bytes,
+			uid_entry->io[UID_STATE_FOREGROUND].fsync,
+			uid_entry->io[UID_STATE_BACKGROUND].fsync);
 	}
 
-	mutex_unlock(&uid_lock);
+	rt_mutex_unlock(&uid_lock);
 
 	return 0;
 }
@@ -328,9 +342,8 @@ static int uid_procstat_open(struct inode *inode, struct file *file)
 static ssize_t uid_procstat_write(struct file *file,
 			const char __user *buffer, size_t count, loff_t *ppos)
 {
-	struct task_struct *task, *temp;
 	struct uid_entry *uid_entry;
-	uid_t uid, task_uid;
+	uid_t uid;
 	int argc, state;
 	char input[128];
 
@@ -349,31 +362,24 @@ static ssize_t uid_procstat_write(struct file *file,
 	if (state != UID_STATE_BACKGROUND && state != UID_STATE_FOREGROUND)
 		return -EINVAL;
 
-	mutex_lock(&uid_lock);
+	rt_mutex_lock(&uid_lock);
 
 	uid_entry = find_or_register_uid(uid);
-	if (!uid_entry || uid_entry->state == state) {
-		mutex_unlock(&uid_lock);
+	if (!uid_entry) {
+		rt_mutex_unlock(&uid_lock);
 		return -EINVAL;
 	}
 
-	memset(&uid_entry->io[UID_STATE_TOTAL_CURR], 0,
-		sizeof(struct io_stats));
-
-	read_lock(&tasklist_lock);
-	do_each_thread(temp, task) {
-		task_uid = from_kuid_munged(current_user_ns(), task_uid(task));
-		if (uid != task_uid)
-			continue;
-		add_uid_io_curr_stats(uid_entry, task);
-	} while_each_thread(temp, task);
-	read_unlock(&tasklist_lock);
+	if (uid_entry->state == state) {
+		rt_mutex_unlock(&uid_lock);
+		return count;
+	}
 
 	update_io_stats_locked();
 
 	uid_entry->state = state;
 
-	mutex_unlock(&uid_lock);
+	rt_mutex_unlock(&uid_lock);
 
 	return count;
 }
@@ -395,7 +401,7 @@ static int process_notifier(struct notifier_block *self,
 	if (!task)
 		return NOTIFY_OK;
 
-	mutex_lock(&uid_lock);
+	rt_mutex_lock(&uid_lock);
 	uid = from_kuid_munged(current_user_ns(), task_uid(task));
 	uid_entry = find_or_register_uid(uid);
 	if (!uid_entry) {
@@ -413,7 +419,7 @@ static int process_notifier(struct notifier_block *self,
 	clean_uid_io_last_stats(uid_entry, task);
 
 exit:
-	mutex_unlock(&uid_lock);
+	rt_mutex_unlock(&uid_lock);
 	return NOTIFY_OK;
 }
 
@@ -448,7 +454,7 @@ static int __init proc_uid_sys_stats_init(void)
 		&uid_io_fops, NULL);
 
 	proc_parent = proc_mkdir("uid_procstat", NULL);
-	if (!io_parent) {
+	if (!proc_parent) {
 		pr_err("%s: failed to create uid_procstat proc entry\n",
 			__func__);
 		goto err;
